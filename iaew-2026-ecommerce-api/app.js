@@ -7,6 +7,7 @@ const pedidosRouter = require('./routes/pedidos');
 
 const app = express();
 const port = process.env.PORT || 3000;
+const { validateAccessToken } = require('./middleware/auth0');
 
 app.use(express.json());
 
@@ -16,6 +17,15 @@ app.get('/health', (req, res) => {
 
 app.use('/productos', productosRouter);
 app.use('/pedidos', pedidosRouter);
+
+app.get('/token-info', validateAccessToken, (req, res) => {
+  res.json({
+    issuer: req.auth.payload.iss,
+    audience: req.auth.payload.aud,
+    subject: req.auth.payload.sub,
+    scopes: req.auth.payload.scope
+  });
+});
 
 connectDb()
   .then(() => {
@@ -28,3 +38,19 @@ connectDb()
     console.error(error.message);
     process.exit(1);
   });
+
+  app.use((err, req, res, next) => {
+  if (err.status === 401) {
+    return res.status(401).json({
+      error: 'Token ausente, inválido o expirado'
+    });
+  }
+
+  if (err.status === 403) {
+    return res.status(403).json({
+      error: 'Permisos insuficientes para ejecutar la acción'
+    });
+  }
+
+  next(err);
+});
