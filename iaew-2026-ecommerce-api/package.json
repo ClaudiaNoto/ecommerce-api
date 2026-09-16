@@ -6,13 +6,15 @@
   "scripts": {
     "dev": "nodemon app.js",
     "start": "node app.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "worker": "node worker.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "amqplib": "^2.0.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-oauth2-jwt-bearer": "^1.10.0",
@@ -21,4 +23,6 @@
   "devDependencies": {
     "nodemon": "^3.1.14"
   }
+
 }
+  

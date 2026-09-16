@@ -3,7 +3,8 @@ const mongoose = require('mongoose');
 const Pedido = require('../models/Pedido');
 const Producto = require('../models/Producto');
 const { requireScope } = require('../middleware/auth0');
-
+const crypto = require('crypto');
+const { publicarPedidoConfirmado } = require('../lib/rabbit');
 const router = express.Router();
 
 router.post('/', requireScope('write:pedidos'), async (req, res) => {
@@ -92,9 +93,34 @@ router.post('/:id/confirmar', requireScope('confirm:pedidos'), async (req, res) 
     pedido.confirmadoEn = new Date();
     await pedido.save();
 
-    res.json(pedido);
-  } catch (error) {
-    res.status(500).json({ error: 'Error al confirmar pedido' });
+    try {
+      // Construir el evento exacto como pide la consigna
+      const evento = {
+        eventId: crypto.randomUUID(),
+        type: 'pedido.confirmado',
+        version: 1,
+        occurredAt: pedido.confirmadoEn.toISOString(), 
+        data: { pedidoId: pedido.id } 
+      };
+
+      // Publicar en RabbitMQ
+      await publicarPedidoConfirmado(evento);
+
+      // Responder 200 con el pedido y el evento
+      return res.status(200).json({
+        pedido: pedido,
+        evento: evento
+      });
+      
+    } catch (error) {
+      return res.status(500).json({
+        error: 'El pedido fue confirmado en la base de datos, pero falló la publicación en RabbitMQ.',
+        detalle: 'Consultar el estado del pedido antes de reintentar',
+        pedidoId: pedido.id
+      });
+    }
+  } catch (error) { 
+    return res.status(400).json({ error: error.message });
   }
 });
 
@@ -106,5 +132,6 @@ router.get('/', requireScope('read:pedidos'), async (req, res) => {
     res.status(500).json({ error: 'Error al consultar pedidos' });
   }
 });
+
 
 module.exports = router;
