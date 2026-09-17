@@ -1,0 +1,1 @@
+"Antes de reintentar una solicitud tras un error 503, el agente debe hacer un GET para consultar el estado actual del recurso (ej. el pedido). Esto se debe a que el error 503 indica una falla de comunicación o de un servicio externo, pero es posible que la transacción principal en la base de datos sí haya impactado de forma asíncrona.

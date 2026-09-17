@@ -6,6 +6,8 @@ const { requireScope } = require('../middleware/auth0');
 const crypto = require('crypto');
 const { publicarPedidoConfirmado } = require('../lib/rabbit');
 const router = express.Router();
+const { validateIdempotencyKey } = require('../lib/idempotency');
+const { sendError } = require('../lib/errors');
 
 router.post('/', requireScope('write:pedidos'), async (req, res) => {
   try {
@@ -64,6 +66,35 @@ router.post('/:id/confirmar', requireScope('confirm:pedidos'), async (req, res) 
     }
 
     const pedido = await Pedido.findById(req.params.id);
+    // 1. validar header 
+    const key = req.header('Idempotency-Key');
+    const invalidKey = validateIdempotencyKey(key);
+    if (invalidKey) {
+      return sendError(res, 400, invalidKey.error, invalidKey.code, false,
+        'Enviar una clave válida y estable por operación', invalidKey.details);
+    }
+
+    // 2. Replay: misma clave en pedido ya confirmado → devolver resultado guardado
+    if (pedido.estado === 'confirmado' &&
+        pedido.confirmacionIdempotencyKey === key &&
+        pedido.confirmacionEvento?.eventId) {
+      res.set('Idempotency-Replayed', 'true');
+      return res.status(200).json({
+        pedido,
+        evento: pedido.confirmacionEvento,
+        idempotencia: { key, replayed: true }
+      });
+    }
+
+    // 3. Conflicto: pedido confirmado con otra clave
+    if (pedido.estado === 'confirmado') {
+      return res.status(409).json({
+        error: 'El pedido ya fue confirmado con otra clave',
+        code: 'IDEMPOTENCY_KEY_MISMATCH',
+        retryable: false,
+        action: 'Consultar el pedido y no generar una nueva confirmación'
+      });
+    }
 
     if (!pedido) {
       return res.status(404).json({ error: 'Pedido no encontrado' });
@@ -82,43 +113,54 @@ router.post('/:id/confirmar', requireScope('confirm:pedidos'), async (req, res) 
         });
       }
     }
-
-    for (const item of pedido.items) {
+for (const item of pedido.items) {
       await Producto.findByIdAndUpdate(item.productoId, {
         $inc: { stock: -item.cantidad }
       });
     }
 
+    // 1. Actualizamos los datos del pedido antes de armar el evento
     pedido.estado = 'confirmado';
-    pedido.confirmadoEn = new Date();
-    await pedido.save();
+    pedido.confirmadoEn = new Date(); // Le asignamos la fecha y hora actual
+
+    // 2. Ahora sí armamos el evento (toISOString funcionará perfecto)
+    const evento = {
+      eventId: crypto.randomUUID(),
+      type: 'pedido.confirmado',
+      version: 1,
+      occurredAt: pedido.confirmadoEn.toISOString(),
+      data: { pedidoId: pedido.id }
+    };
+    pedido.confirmacionIdempotencyKey = key;
+    pedido.confirmacionEvento = evento;
 
     try {
-      // Construir el evento exacto como pide la consigna
-      const evento = {
-        eventId: crypto.randomUUID(),
-        type: 'pedido.confirmado',
-        version: 1,
-        occurredAt: pedido.confirmadoEn.toISOString(), 
-        data: { pedidoId: pedido.id } 
-      };
-
-      // Publicar en RabbitMQ
-      await publicarPedidoConfirmado(evento);
-
-      // Responder 200 con el pedido y el evento
-      return res.status(200).json({
-        pedido: pedido,
-        evento: evento
-      });
-      
+      await pedido.save();
     } catch (error) {
-      return res.status(500).json({
-        error: 'El pedido fue confirmado en la base de datos, pero falló la publicación en RabbitMQ.',
-        detalle: 'Consultar el estado del pedido antes de reintentar',
-        pedidoId: pedido.id
+      if (error?.code === 11000) {
+        return sendError(res, 409, 'La clave de idempotencia ya fue usada en otro pedido',
+          'IDEMPOTENCY_KEY_REUSED', false, 'Usar una clave distinta por operación');
+      }
+      throw error;
+    }
+
+    try {
+      await publicarPedidoConfirmado(evento);
+      res.set('Idempotency-Replayed', 'false');
+      return res.status(200).json({
+        pedido,
+        evento,
+        idempotencia: { key, replayed: false }
+      });
+
+    } catch (error) {
+      console.error('Pedido confirmado, pero no se pudo publicar el evento:', error.message);
+      return res.status(503).json({
+        error: 'El pedido quedó confirmado, pero no se pudo publicar la notificación.',
+        pedido
       });
     }
+
   } catch (error) { 
     return res.status(400).json({ error: error.message });
   }
