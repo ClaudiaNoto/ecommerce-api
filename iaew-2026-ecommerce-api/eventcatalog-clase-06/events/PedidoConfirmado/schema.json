@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://iaew.example.test/schemas/pedido-confirmado-v1.json",
+  "title": "pedido.confirmado v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["eventId", "type", "version", "occurredAt", "data"],
+  "properties": {
+    "eventId": { "type": "string", "format": "uuid" },
+    "type": { "const": "pedido.confirmado" },
+    "version": { "const": 1 },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pedidoId"],
+      "properties": {
+        "pedidoId": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "IAEW Pedidos API", "version": "1.0.0", "description": "Contrato del flujo de confirmación idempotente de pedidos." },
+  "servers": [{ "url": "http://localhost:3000", "description": "Entorno local" }],
+  "tags": [{ "name": "Pedidos", "description": "Operaciones de negocio sobre pedidos" }],
+  "paths": {
+    "/pedidos/{id}/confirmar": {
+      "post": {
+        "tags": ["Pedidos"],
+        "summary": "Confirmar un pedido una sola vez",
+        "description": "Descuenta stock, confirma el pedido y publica pedido.confirmado. Repetir con la misma Idempotency-Key devuelve el resultado persistido.",
+        "operationId": "confirmarPedido",
+        "security": [{ "oauth2": ["confirm:pedidos"] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "description": "Identificador MongoDB del pedido", "schema": { "type": "string", "pattern": "^[a-fA-F0-9]{24}$" }, "example": "507f1f77bcf86cd799439011" },
+          { "name": "Idempotency-Key", "in": "header", "required": true, "description": "Identifica de forma estable una intención de confirmación.", "schema": { "type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[A-Za-z0-9._:-]+$" }, "example": "pedido:507f1f77bcf86cd799439011:confirmar:v1" }
+        ],
+        "responses": {
+          "200": { "description": "Pedido confirmado o replay de una confirmación anterior.", "headers": { "Idempotency-Replayed": { "description": "Indica si se devolvió el resultado persistido.", "schema": { "type": "string", "enum": ["true", "false"] } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConfirmacionResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "503": { "$ref": "#/components/responses/Unavailable" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": { "oauth2": { "type": "oauth2", "flows": { "clientCredentials": { "tokenUrl": "https://TU_AUTH0_DOMAIN/oauth/token", "scopes": { "confirm:pedidos": "Confirmar pedidos" } } }, "x-audience": "https://iaew-pedidos-api" } },
+    "schemas": {
+      "EventoPedidoConfirmado": { "type": "object", "required": ["eventId", "type", "version", "occurredAt", "data"], "properties": { "eventId": { "type": "string", "format": "uuid" }, "type": { "const": "pedido.confirmado" }, "version": { "const": 1 }, "occurredAt": { "type": "string", "format": "date-time" }, "data": { "type": "object", "required": ["pedidoId"], "properties": { "pedidoId": { "type": "string" } } } } },
+      "ConfirmacionResponse": { "type": "object", "required": ["pedido", "evento", "idempotencia"], "properties": { "pedido": { "type": "object", "description": "Pedido confirmado" }, "evento": { "$ref": "#/components/schemas/EventoPedidoConfirmado" }, "idempotencia": { "type": "object", "required": ["key", "replayed"], "properties": { "key": { "type": "string" }, "replayed": { "type": "boolean" } } } } },
+      "Error": { "type": "object", "required": ["error", "code", "retryable", "action"], "properties": { "error": { "type": "string" }, "code": { "type": "string" }, "retryable": { "type": "boolean" }, "action": { "type": "string" }, "details": { "type": "object", "additionalProperties": true } } }
+    },
+    "responses": {
+      "BadRequest": { "description": "Solicitud o Idempotency-Key inválida", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Unauthorized": { "description": "Token ausente, inválido o expirado", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Forbidden": { "description": "Falta el scope confirm:pedidos", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "NotFound": { "description": "Pedido inexistente", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Conflict": { "description": "Estado, stock o clave incompatible", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Unavailable": { "description": "No se pudo publicar el evento", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+    }
+  }
+}

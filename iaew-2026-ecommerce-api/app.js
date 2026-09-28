@@ -9,6 +9,12 @@ const app = express();
 const port = process.env.PORT || 3000;
 const { validateAccessToken } = require('./middleware/auth0');
 
+const swaggerUi = require('swagger-ui-express');
+const fs = require('fs');
+const path = require('path');
+const openapiDocument = JSON.parse(fs.readFileSync(path.join(__dirname, 'docs/openapi.json'), 'utf8'));
+
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openapiDocument));
 app.use(express.json());
 
 app.get('/health', (req, res) => {
